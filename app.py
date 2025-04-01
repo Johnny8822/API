@@ -86,7 +86,7 @@ async def add_new_temp_NRF(request: Request):
     new_temp_NRF = await request.json()
     
     
-    if (not new_temp_NRF["sensor_id"] == "") and (not new_temp_NRF["sensor_name"] == "") and (not new_temp_NRF["temperautre"] == ""):
+    if (not new_temp_NRF["sensor_id"] == "") and (not new_temp_NRF["sensor_name"] == "") and (not new_temp_NRF["temperature"] == ""):
       temperature_records_NRF.append(new_temp_NRF)
       
       return {

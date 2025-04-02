@@ -12,7 +12,7 @@ class Temperature_Data_Peltier(BaseModel):
     sensor_id: str
     temperature: float 
     sensor_name: str
-    block_state: bool
+    block_on_off_state: bool
 
 
 # A Class to store the sensor data that is being sent from the Atmega328p modules to the esp32 using the nrf24l01 
@@ -21,18 +21,18 @@ class Temperature_Sensor_Modules(BaseModel):
     sensor_id_nrf: str
     temperature_nrf: float 
     sensor_name_nrf: str 
-
+    battery_level: float
 
 # A Class to control the state of each of the 4 fans
 class Fan_Control(BaseModel): 
     fan_name: str # The name of each fan(e.g HOT_1, COLD_1, HOT_2, COLD_2)
     fan_speed: int # The speed of the fan (using pwm and it is a value from 0-100% using the mapping function)
     fan_pin: int # The pin that the fan is connected to on the ESP32
-    fan_state: bool
+    fan_state: bool #This shows if the fan is ON/OFF. Each peltier block and coressponding hot and cold fan turns on at the same time
 
 
 class Pump_Control(BaseModel):
-   pump_name: str
+   pump_name: str #This shows if the pump belongs to 
    pump_state: bool
 
 
@@ -54,6 +54,7 @@ class Solar_PV(BaseModel):
 # Store received temperature data
 temperature_records_peltier = [] 
 temperature_records_NRF = [] 
+solar_pv_records =[]
 
 
 
@@ -116,7 +117,7 @@ def get_all_Peltier_temp():
 @app.post("/temperature_Peltier") 
 async def add_new_temp_Peltier(request: Request): 
     add_new_Peltier = await request.json()
-    temperature_records_peltier.append(add_new_Peltier)
+    temperature_records_peltier.append(add_new_Peltier) 
     return {
       "sucess" : True, 
       "result": add_new_Peltier    

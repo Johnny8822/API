@@ -10,9 +10,11 @@ greenlet==3.1.1
 h11==0.14.0
 httptools==0.6.4
 idna==3.10
+psycopg2-binary==2.9.10
 pydantic==2.10.6
 pydantic_core==2.27.2
 PyMySQL==1.1.1
+pyodbc==5.2.0
 python-dotenv==1.0.1
 pytz==2025.2
 requests==2.32.3

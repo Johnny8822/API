@@ -1,154 +1,95 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
-
-
+from typing import List, Optional
+from datetime import datetime
+from dotenv import load_dotenv
+import os
 
 app = FastAPI()
+load_dotenv()  # Load variables from .env
 
 
-# Define the request model for Peltiers Module Blocks
-class Temperature_Data_Peltier(BaseModel):
+# --- Pydantic Models ---
+
+class TemperatureReading(BaseModel):
     sensor_id: str
-    temperature: float 
-    sensor_name: str
-    block_on_off_state: bool
+    temperature: float
+    sensor_type: str  # DS18B20 or TMP36
+    battery_level: Optional[float] = None  # only for NRF sensors
+    timestamp: Optional[datetime] = datetime.utcnow()
 
+class FanControl(BaseModel):
+    fan_id: str  # cold_fan_1, cold_fan_2
+    speed_percent: int
 
-# A Class to store the sensor data that is being sent from the Atmega328p modules to the esp32 using the nrf24l01 
+class PeltierControl(BaseModel):
+    block_id: str  # peltier_block_1 or peltier_block_2
+    state: bool
 
-class Temperature_Sensor_Modules(BaseModel): 
-    sensor_id_nrf: str
-    temperature_nrf: float 
-    sensor_name_nrf: str 
-    battery_level: float
+class SolarPVData(BaseModel):
+    panel_voltage: float
+    panel_current: float
+    load_voltage: float
+    load_current: float
+    load_power: float
+    battery_voltage: float
+    battery_current: float
+    sunlight_intensity: float
+    timestamp: Optional[datetime] = datetime.utcnow()
 
-# A Class to control the state of each of the 4 fans
-class Fan_Control(BaseModel): 
-    fan_name: str # The name of each fan(e.g HOT_1, COLD_1, HOT_2, COLD_2)
-    fan_speed: int # The speed of the fan (using pwm and it is a value from 0-100% using the mapping function)
-    fan_pin: int # The pin that the fan is connected to on the ESP32
-    fan_state: bool #This shows if the fan is ON/OFF. Each peltier block and coressponding hot and cold fan turns on at the same time
+# --- Data Storage ---
+temp_data: List[TemperatureReading] = []
+fan_states = {"cold_fan_1": 0, "cold_fan_2": 0}
+peltier_blocks = {"peltier_block_1": False, "peltier_block_2": False}
+pump_states = {"pump_1": False, "pump_2": False}
+hot_fan_pid_outputs = {"hot_fan_1": 0, "hot_fan_2": 0}  # simulated PID values
+solar_pv_logs: List[SolarPVData] = []
 
+# --- API Endpoints ---
 
-class Pump_Control(BaseModel):
-   pump_name: str #This shows if the pump belongs to 
-   pump_state: bool
+@app.post("/temperature")
+async def receive_temperature(data: List[TemperatureReading]):
+    temp_data.extend(data)
+    return {"message": "Temperature data received.", "count": len(data)}
 
+@app.put("/fan_control")
+async def update_fan_speed(control: FanControl):
+    if control.fan_id not in fan_states:
+        raise HTTPException(status_code=404, detail="Fan not found")
+    fan_states[control.fan_id] = control.speed_percent
+    return {"message": f"Fan {control.fan_id} speed updated.", "speed": control.speed_percent}
 
-class User_Time_Temp_Control(BaseModel):
-    temperature_setpoint: float 
-    air_condition_timer: int
+@app.post("/peltier_control")
+async def set_peltier_state(control: PeltierControl):
+    if control.block_id not in peltier_blocks:
+        raise HTTPException(status_code=404, detail="Peltier block not found")
 
-class Solar_PV(BaseModel): 
-   pv_voltage: float
-   pv_current: float
-   battery_voltage:float
-   battery_current:float
-   load_voltage:float
-   load_current:float
-   load_power:float
-   sunlight_intensity: float
+    peltier_blocks[control.block_id] = control.state
+    block_index = 1 if control.block_id.endswith("1") else 2
+    pump_states[f"pump_{block_index}"] = control.state
+    fan_states[f"cold_fan_{block_index}"] = 100 if control.state else 0
+    hot_fan_pid_outputs[f"hot_fan_{block_index}"] = 100 if control.state else 0  # simulate PID output
 
+    return {"message": f"Peltier block {control.block_id} {'ON' if control.state else 'OFF'}"}
 
-# Store received temperature data
-temperature_records_peltier = [] 
-temperature_records_NRF = [] 
-solar_pv_records =[]
+@app.post("/solar_pv")
+async def receive_solar_data(data: SolarPVData):
+    solar_pv_logs.append(data)
+    return {"message": "Solar PV data received."}
 
-
-
-#This request is to post temprautres from the ESP32 about the tempearutres of the peltier blocks
-""" @app.post("/temperature_peltier")
-async def send_temperature_peltier(data: List[Temperature_Data_Peltier]):
-    try:
-        for entry in data:
-            temperature_records_peltier.append({"sensor_id": entry.sensor_id, "temperature": entry.temperature})
-        return {"message": "Temperature data for Peltiers received successfully", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
- """
-
-
-
-""" @app.post("/temperature_NRF")
-async def send_temperature_nrf(data: List[Temperature_Sensor_Modules]):
-    try:
-        for entry in data:
-            temperature_records_NRF.append({"sensor_id": entry.sensor_id_nrf,"sensor_name":entry.sensor_name_nrf, "temperature": entry.temperature_nrf})
-        return {"message": "Temperature data from NRFs received successfully", "data": data}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) """
-
-
-
-@app.post("/temperature_NRF") 
-async def add_new_temp_NRF(request: Request): 
-    new_temp_NRF = await request.json()
-    
-    
-    if (not new_temp_NRF["sensor_id"] == "") and (not new_temp_NRF["sensor_name"] == "") and (not new_temp_NRF["temperature"] == ""):
-      temperature_records_NRF.append(new_temp_NRF)
-      
-      return {
-      "success" : True, 
-      "result": new_temp_NRF     
-    }
-    else: 
-      return {
-      "success" : False, 
-      "result": {
-          "message": "Entry is not complete"
-      }   
-    } 
-#Request to send all NRF temp to API and Database
-@app.get("/temperature_NRF")
-def get_all_NRF_temp():
-    return temperature_records_NRF
-
-
-#Request to view all Peltier Data entrys
-@app.get("/temperature_Peltier")
-def get_all_Peltier_temp():
-    return temperature_records_peltier
-
-
-#Request to send all Peltier data entry to API and Database
-@app.post("/temperature_Peltier") 
-async def add_new_temp_Peltier(request: Request): 
-    add_new_Peltier = await request.json()
-    temperature_records_peltier.append(add_new_Peltier) 
+@app.get("/status")
+def get_system_status():
     return {
-      "sucess" : True, 
-      "result": add_new_Peltier    
+        "temperatures": [t.dict() for t in temp_data[-8:]],  # latest 8 readings
+        "fan_states": fan_states,
+        "peltier_blocks": peltier_blocks,
+        "pump_states": pump_states,
+        "hot_fan_pid_outputs": hot_fan_pid_outputs,
+        "solar_data": solar_pv_logs[-1].dict() if solar_pv_logs else {}
     }
 
-
-
-
-
-
-
-
-#This request is to get the temperatures of the peltier modules
-""" @app.get("/temperature_peltier/temperature")
-def retrieve_temperatures_p(): 
- #return {"Temperature Of The Peliter Blocks": temperature_records_peltier}    
-    temp_peltier =[]  
-    for datum in temperature_records_peltier: 
-        temp_peltier.append(datum["temperature"])
-    return temp_peltier
- """
-
-""" @app.get("/temperature_NRF/temperatures")
-def retrieve_temperatures_mods(): 
-    temp_nrf = []
-    for datum in temp_nrf: 
-        temp_nrf.append(datum[temperature_records_NRF])
-    return temp_nrf """
-
-
-if __name__ == "__main__":
+if __name__ == "__app__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
-    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+#uvicorn main:app --host 0.0.0.0 --port 8000 ALWAYS STARTS THE SERVER

@@ -1,25 +1,37 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+import pytz
 from dotenv import load_dotenv
 import os
 
 app = FastAPI()
 load_dotenv()  # Load variables from .env
 
+#Fixe the date time to EST Jamaica timezone 
+# Choose your target timezone
+# TARGET_TZ = pytz.timezone('America/New_York') # Handles DST (EST/EDT)
+TARGET_TZ = pytz.timezone('America/Jamaica') # Fixed EST (UTC-5), suitable for Kingston
+
+def get_current_time_in_target_tz():
+    """Gets the current time localized to the target timezone."""
+    return datetime.now(TARGET_TZ)
+
 
 # --- Pydantic Models ---
 
 class TemperatureReading(BaseModel):
     sensor_id: str
+    sensor_name: str
     temperature: float
     sensor_type: str  # DS18B20 or TMP36
     battery_level: Optional[float] = None  # only for NRF sensors
-    timestamp: Optional[datetime] = datetime.utcnow()
+    timestamp: Optional[datetime] = datetime.now(TARGET_TZ)
 
 class FanControl(BaseModel):
     fan_id: str  # cold_fan_1, cold_fan_2
+    fan_name: str
     speed_percent: int
 
 class PeltierControl(BaseModel):
@@ -35,7 +47,7 @@ class SolarPVData(BaseModel):
     battery_voltage: float
     battery_current: float
     sunlight_intensity: float
-    timestamp: Optional[datetime] = datetime.utcnow()
+    timestamp: Optional[datetime] = datetime.now(TARGET_TZ)
 
 # --- Data Storage ---
 temp_data: List[TemperatureReading] = []
@@ -87,6 +99,7 @@ def get_system_status():
         "hot_fan_pid_outputs": hot_fan_pid_outputs,
         "solar_data": solar_pv_logs[-1].dict() if solar_pv_logs else {}
     }
+
 
 if __name__ == "__app__":
     import uvicorn

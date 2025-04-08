@@ -7,7 +7,7 @@ from typing import List # Keep List for endpoints returning multiple items
 import models
 import schemas # Assuming your Pydantic models are in schemas.py
 from database import engine, get_db
-
+import psycopg2
 # --- This line creates the tables in the database if they don't exist ---
 # --- It uses the definitions from models.py ---
 models.Base.metadata.create_all(bind=engine)

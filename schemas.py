@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import pytz # If using timezone support
+import os
+
 
 # Example using the timezone function from previous steps
 TARGET_TZ = pytz.timezone('America/Jamaica')

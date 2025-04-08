@@ -4,6 +4,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 import os
 from dotenv import load_dotenv
+from flask import Flask, jsonify
+import psycopg2
+
+
 
 load_dotenv() # Load variables from .env file
 

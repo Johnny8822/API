@@ -1,7 +1,8 @@
 # main.py (Simplified Example)
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status # Added status
 from sqlalchemy.orm import Session
-from typing import List # Keep List for endpoints returning multiple items
+from typing import List # Make sure List is imported
+
 
 # Import your modules (adjust paths if needed)
 import models
@@ -15,29 +16,39 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# --- Example: Modifying the POST /temperature endpoint ---
-@app.post("/temperature", response_model=schemas.TemperatureReading) # Use your Pydantic schema
+# Change the endpoint to accept a List of creation schemas
+@app.post("/temperature", status_code=status.HTTP_201_CREATED) # Set default success code
 async def receive_temperature(
-    data: schemas.TemperatureReading, # Input data uses Pydantic schema
-    db: Session = Depends(get_db) # Inject the database session
+    data: List[schemas.TemperatureReadingCreate], # Expect a LIST of creation objects
+    db: Session = Depends(get_db)
 ):
-    # Create an instance of the SQLAlchemy model from the input data
-    db_reading = models.TemperatureReadingDB(
-        sensor_id=data.sensor_id,
-        sensor_name=data.sensor_name,
-        temperature=data.temperature,
-        sensor_type=data.sensor_type,
-        battery_level=data.battery_level
-        # Timestamp will use the default defined in models.py
-    )
-    # Add the new reading object to the database session
-    db.add(db_reading)
-    # Commit the transaction to save it to the database
-    db.commit()
-    # Refresh the object to get any new data from the DB (like the auto-generated ID)
-    db.refresh(db_reading)
-    # Return the newly created record (FastAPI converts it back based on response_model)
-    return db_reading
+    created_count = 0
+    # Loop through each reading sent in the list
+    for reading_data in data:
+        # Create the DB model instance
+        db_reading = models.TemperatureReadingDB(
+           sensor_id=reading_data.sensor_id,
+           # Use the sensor_name if provided, otherwise default (or handle as needed)
+           sensor_name=reading_data.sensor_name or f"Sensor_{reading_data.sensor_id}",
+           temperature=reading_data.temperature,
+           sensor_type=reading_data.sensor_type,
+           battery_level=reading_data.battery_level
+        )
+        db.add(db_reading)
+        created_count += 1
+
+    # Commit all readings added in the loop at once
+    if created_count > 0:
+        try:
+            db.commit()
+            # You generally don't need to refresh multiple items unless returning them
+            return {"message": f"{created_count} temperature reading(s) saved successfully."}
+        except Exception as e:
+            db.rollback() # Rollback on error
+            raise HTTPException(status_code=500, detail=f"Database commit failed: {e}")
+    else:
+         # If the input list was empty
+         raise HTTPException(status_code=400, detail="No temperature readings provided in the list.")
 
 # --- Example: Modifying the GET /status endpoint ---
 @app.get("/status") # Define a Pydantic schema for the response if needed

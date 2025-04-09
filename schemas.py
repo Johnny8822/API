@@ -15,7 +15,7 @@ def get_current_time_in_target_tz():
 # (Might not need timestamp here if DB generates it)
 class TemperatureReadingBase(BaseModel):
     sensor_id: str
-    sensor_name: str
+    sensor_name: str # <-- ADD THIS LINE
     temperature: float
     sensor_type: str
     battery_level: Optional[float] = None

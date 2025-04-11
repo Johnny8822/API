@@ -1,6 +1,6 @@
 # models.py
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
-from .database import Base # Import Base from your database.py
+from database import Base # Import Base from your database.py
 from datetime import datetime
 import pytz # If using timezone support
 

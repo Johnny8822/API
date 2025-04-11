@@ -1,34 +1,29 @@
-# main.py (Simplified Example)
-from fastapi import FastAPI, Depends, HTTPException, status # Added status
+# app.py
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List # Make sure List is imported
-
+from typing import List, Optional # Ensure Optional is imported
 
 # Import your modules (adjust paths if needed)
 import models
-import schemas # Assuming your Pydantic models are in schemas.py
+import schemas
 from database import engine, get_db
-import psycopg2
-# --- This line creates the tables in the database if they don't exist ---
-# --- It uses the definitions from models.py ---
+
+# --- This creates tables if they don't exist, including the new solar_pv_data ---
 models.Base.metadata.create_all(bind=engine)
-# -----------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 app = FastAPI()
 
-# Change the endpoint to accept a List of creation schemas
-@app.post("/temperature", status_code=status.HTTP_201_CREATED) # Set default success code
+# --- Temperature Endpoint (as modified before) ---
+@app.post("/temperature", status_code=status.HTTP_201_CREATED)
 async def receive_temperature(
-    data: List[schemas.TemperatureReadingCreate], # Expect a LIST of creation objects
+    data: List[schemas.TemperatureReadingCreate],
     db: Session = Depends(get_db)
 ):
     created_count = 0
-    # Loop through each reading sent in the list
     for reading_data in data:
-        # Create the DB model instance
         db_reading = models.TemperatureReadingDB(
            sensor_id=reading_data.sensor_id,
-           # Use the sensor_name if provided, otherwise default (or handle as needed)
            sensor_name=reading_data.sensor_name or f"Sensor_{reading_data.sensor_id}",
            temperature=reading_data.temperature,
            sensor_type=reading_data.sensor_type,
@@ -37,21 +32,37 @@ async def receive_temperature(
         db.add(db_reading)
         created_count += 1
 
-    # Commit all readings added in the loop at once
     if created_count > 0:
         try:
             db.commit()
-            # You generally don't need to refresh multiple items unless returning them
             return {"message": f"{created_count} temperature reading(s) saved successfully."}
         except Exception as e:
-            db.rollback() # Rollback on error
+            db.rollback()
             raise HTTPException(status_code=500, detail=f"Database commit failed: {e}")
     else:
-         # If the input list was empty
          raise HTTPException(status_code=400, detail="No temperature readings provided in the list.")
 
-# --- Example: Modifying the GET /status endpoint ---
-@app.get("/status") # Define a Pydantic schema for the response if needed
+# --- ADD POST /solar_pv ENDPOINT ---
+@app.post("/solar_pv", response_model=schemas.SolarPVData, status_code=status.HTTP_201_CREATED)
+async def receive_solar_data(
+    data: schemas.SolarPVDataCreate, # Expect a single SolarPVDataCreate object
+    db: Session = Depends(get_db)
+):
+    # Create the SQLAlchemy model instance
+    db_solar_data = models.SolarPVDataDB(**data.model_dump()) # Convenient way to map fields
+
+    db.add(db_solar_data)
+    try:
+        db.commit()
+        db.refresh(db_solar_data) # Get ID and timestamp from DB
+        return db_solar_data # Return the created record
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database commit failed: {e}")
+# ----------------------------------
+
+# --- ADD GET /status ENDPOINT ---
+@app.get("/status", response_model=schemas.SystemStatus)
 def get_system_status(db: Session = Depends(get_db)):
     # Query the database for the latest 8 temperature readings
     latest_temps = db.query(models.TemperatureReadingDB)\
@@ -59,23 +70,36 @@ def get_system_status(db: Session = Depends(get_db)):
                      .limit(8)\
                      .all()
 
-    # Query the latest solar data (assuming you created models.SolarPVDataDB)
+    # Query the latest solar data
     latest_solar = db.query(models.SolarPVDataDB)\
                      .order_by(models.SolarPVDataDB.timestamp.desc())\
                      .first() # Gets only the single latest record or None
 
-    # You would need to query Fan/Peltier states too if you store them in DB
-    # For now, returning placeholders or empty dicts if not stored in DB yet
-    return {
-        "temperatures": latest_temps,
-        "fan_states": {}, # Replace with DB data if applicable
-        "peltier_blocks": {}, # Replace with DB data if applicable
-        "pump_states": {}, # Replace with DB data if applicable
-        "hot_fan_pid_outputs": {}, # Replace with DB data if applicable
-        "solar_data": latest_solar # Returns the object or None
-    }
+    # TODO: Query Fan/Peltier states if you add models/tables for them
+    # For now, returning empty dicts as placeholders
+    fan_states_from_db = {}
+    peltier_blocks_from_db = {}
+    pump_states_from_db = {} # Assuming pumps tied to peltier blocks might not need separate DB table
+    hot_fan_pid_outputs_from_db = {} # Likely calculated, not stored?
 
-# --- Remember to update your other endpoints similarly ---
-# (e.g., /solar_pv, /fan_control, /peltier_control)
-# You'll need to define SQLAlchemy models for Fan, Peltier states if you
-# want to store those in the database too.
+    status_data = schemas.SystemStatus(
+        temperatures=latest_temps,
+        solar_data=latest_solar,
+        fan_states=fan_states_from_db,
+        peltier_blocks=peltier_blocks_from_db,
+        pump_states=pump_states_from_db,
+        hot_fan_pid_outputs=hot_fan_pid_outputs_from_db
+    )
+
+    return status_data
+# -----------------------------
+
+# --- Remember to add endpoints for FanControl and PeltierControl if needed ---
+# Example:
+# @app.put("/fan_control", response_model=schemas.FanControl)
+# async def update_fan_speed(control: schemas.FanControl, db: Session = Depends(get_db)):
+#     # Find fan state in DB (requires a FanState model/table)
+#     # Update it
+#     # Commit
+#     # Return updated state
+#     pass # Replace with actual implementation

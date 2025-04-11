@@ -45,6 +45,6 @@ class SystemSettings(Base):
     temperature_setpoint = Column(Float, default=23.0)
     ac_timer_on = Column(Time, default=time(hour=7, minute=0))
     ac_timer_off = Column(Time, default=time(hour=22, minute=0))
-    fan_1_speed_percent = Column(Integer, default=50)
+    fan_4_speed_percent = Column(Integer, default=50)
     fan_2_speed_percent = Column(Integer, default=50)
     updated_at = Column(DateTime(timezone=True), default=get_current_time_in_target_tz, onupdate=get_current_time_in_target_tz)

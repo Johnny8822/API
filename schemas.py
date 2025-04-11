@@ -17,13 +17,22 @@ class TemperatureReadingBase(BaseModel):
 class SolarPVDataBase(BaseModel):
     panel_voltage: float
     panel_current: float
-    # ... (other solar fields)
+    battery_voltage: float
+    battery_current: float
+    load_voltage: float 
+    load_current: float
+    load_power: float
     sunlight_intensity: float
 
 class SettingsBase(BaseModel):
     # ... (settings fields) ...
     fan_2_speed_percent: Optional[int] = Field(None, ge=0, le=100)
-
+    fan_4_speed_percent: Optional[int] = Field(None, ge=0, le=100)
+    ac_timer_on: Optional[time] = None
+    ac_timer_off: Optional[time] = None 
+    temperature_setpoint: Optional[float] = Field(None, ge=0, le=100)
+    updated_at: Optional[datetime] = None # Use datetime for updated_at
+    
 # --- Then define CREATE Schemas (if needed) ---
 class TemperatureReadingCreate(TemperatureReadingBase):
     pass

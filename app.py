@@ -1,49 +1,47 @@
 # app.py
+import os
+from typing import List
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
 from datetime import datetime
 import pytz
-
-# Import CORS middleware
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
-# Use absolute imports
 import models
 import schemas
-from database import engine, get_db # Keep existing imports
+from database import engine, get_db
 
-# --- Creates tables if they don't exist ---
-# Includes temperature_readings, solar_pv_data, system_settings
+# --- Static Directory Configuration ---
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# --- Create Database Tables ---
 print("Attempting to create database tables...")
 try:
     models.Base.metadata.create_all(bind=engine)
     print("Database tables checked/created.")
 except Exception as e:
     print(f"Error creating database tables: {e}")
-# --------------------------------------------
 
 app = FastAPI(title="Capstone API")
 
-# --- ADD CORS MIDDLEWARE CONFIGURATION ---
-# Define allowed origins (adjust as needed for production)
+# --- CORS Configuration ---
 origins = [
+    "http://192.168.100.246:8000",
     "http://localhost",
     "http://localhost:8080",
-    "http://127.0.0.1",
-    "http://127.0.0.1:8080",
-    "null",  # Allows opening index.html directly via file://
-    "*",     # Allows all origins - REMOVE/RESTRICT FOR PRODUCTION
+    "*"
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # List of origins allowed
-    allow_credentials=True,      # Allow cookies
-    allow_methods=["*"],         # Allow all methods (GET, POST, PATCH, etc.)
-    allow_headers=["*"],         # Allow all headers
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-# ---------------------------------------
+
 
 # --- Endpoint to receive Temperature Data ---
 @app.post("/temperature", status_code=status.HTTP_201_CREATED, tags=["Sensor Data"])
@@ -236,6 +234,30 @@ def get_system_status(db: Session = Depends(get_db)):
         current_settings=current_settings # Pass the settings object (or None)
     )
     return status_data
+
+
+# --- HTML Page Endpoints ---
+@app.get("/", response_class=FileResponse, include_in_schema=False)
+async def read_index():
+    """Serve index.html at root"""
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(status_code=404, detail="index.html not found")
+    return FileResponse(index_path)
+
+@app.get("/{page_name}", response_class=FileResponse, include_in_schema=False)
+async def read_page(page_name: str):
+    """Serve other HTML pages without .html extension"""
+    page_path = os.path.join(STATIC_DIR, f"{page_name}.html")
+    if not os.path.exists(page_path):
+        raise HTTPException(status_code=404, detail=f"{page_name} not found")
+    return FileResponse(page_path)
+
+
+# --- MOUNT STATIC DIRECTORY (mount last, generally) ---
+# This makes files like style.css and script.js accessible via /static/filename.ext
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# ------------------------------------------------------
 
 # --- TODO: Add endpoints for FanControl and PeltierControl if needed ---
 # These would likely interact with the SystemSettings table via PATCH /settings

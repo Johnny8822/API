@@ -237,21 +237,26 @@ def get_system_status(db: Session = Depends(get_db)):
 
 
 # --- HTML Page Endpoints ---
+# --- Update HTML Endpoints ---
 @app.get("/", response_class=FileResponse, include_in_schema=False)
 async def read_index():
-    """Serve index.html at root"""
-    index_path = os.path.join(STATIC_DIR, "index.html")
-    if not os.path.exists(index_path):
-        raise HTTPException(status_code=404, detail="index.html not found")
-    return FileResponse(index_path)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
-@app.get("/{page_name}", response_class=FileResponse, include_in_schema=False)
-async def read_page(page_name: str):
-    """Serve other HTML pages without .html extension"""
-    page_path = os.path.join(STATIC_DIR, f"{page_name}.html")
-    if not os.path.exists(page_path):
-        raise HTTPException(status_code=404, detail=f"{page_name} not found")
-    return FileResponse(page_path)
+# Add explicit route for /temperatures
+@app.get("/temperatures", response_class=FileResponse, include_in_schema=False)
+async def read_temperatures():
+    return FileResponse(os.path.join(STATIC_DIR, "temperatures.html"))
+
+# Add explicit route for /settings
+@app.get("/settings", response_class=FileResponse, include_in_schema=False)
+async def read_settings():
+    return FileResponse(os.path.join(STATIC_DIR, "settings.html"))
+
+# Add explicit route for /pv_info
+@app.get("/pv_info", response_class=FileResponse, include_in_schema=False)
+async def read_pv_info():
+    return FileResponse(os.path.join(STATIC_DIR, "pv_info.html"))
+
 
 
 # --- MOUNT STATIC DIRECTORY (mount last, generally) ---

@@ -27,7 +27,7 @@ class SolarPVDataBase(BaseModel):
 class SettingsBase(BaseModel):
     # ... (settings fields) ...
     fan_2_speed_percent: Optional[int] = Field(None, ge=0, le=100)
-    fan_4_speed_percent: Optional[int] = Field(None, ge=0, le=100)
+    fan_1_speed_percent: Optional[int] = Field(None, ge=0, le=100)
     ac_timer_on: Optional[time] = None
     ac_timer_off: Optional[time] = None 
     temperature_setpoint: Optional[float] = Field(None, ge=0, le=100)

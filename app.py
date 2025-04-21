@@ -247,7 +247,6 @@ async def read_index():
 async def read_temperatures():
     return FileResponse(os.path.join(STATIC_DIR, "temperatures.html"))
 
-# Add explicit route for /settings
 @app.get("/settings", response_class=FileResponse, include_in_schema=False)
 async def read_settings():
     return FileResponse(os.path.join(STATIC_DIR, "settings.html"))

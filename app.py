@@ -3,12 +3,15 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
-import pytz # Needed for timezone within settings update
+import pytz
+
+# Import CORS middleware
+from fastapi.middleware.cors import CORSMiddleware
 
 # Use absolute imports
 import models
 import schemas
-from database import engine, get_db
+from database import engine, get_db # Keep existing imports
 
 # --- Creates tables if they don't exist ---
 # Includes temperature_readings, solar_pv_data, system_settings
@@ -21,6 +24,26 @@ except Exception as e:
 # --------------------------------------------
 
 app = FastAPI(title="Capstone API")
+
+# --- ADD CORS MIDDLEWARE CONFIGURATION ---
+# Define allowed origins (adjust as needed for production)
+origins = [
+    "http://localhost",
+    "http://localhost:8080",
+    "http://127.0.0.1",
+    "http://127.0.0.1:8080",
+    "null",  # Allows opening index.html directly via file://
+    "*",     # Allows all origins - REMOVE/RESTRICT FOR PRODUCTION
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,       # List of origins allowed
+    allow_credentials=True,      # Allow cookies
+    allow_methods=["*"],         # Allow all methods (GET, POST, PATCH, etc.)
+    allow_headers=["*"],         # Allow all headers
+)
+# ---------------------------------------
 
 # --- Endpoint to receive Temperature Data ---
 @app.post("/temperature", status_code=status.HTTP_201_CREATED, tags=["Sensor Data"])
@@ -134,7 +157,6 @@ def update_settings(
          except Exception as e:
             db.rollback()
             print(f"Error creating default settings during PATCH: {e}")
-            # If creation fails maybe raise 500, or maybe 404 is still appropriate
             raise HTTPException(status_code=500, detail=f"Settings not found and could not be created: {e}")
 
     if not settings: # Check again after potential creation
@@ -164,7 +186,7 @@ def update_settings(
         try:
             db.commit()
             db.refresh(settings)
-            print(f"Successfully updated settings: {update_data.keys()}")
+            print(f"Successfully updated settings: {list(update_data.keys())}") # Log updated keys
             return settings
         except Exception as e:
             db.rollback()
@@ -198,9 +220,7 @@ def get_system_status(db: Session = Depends(get_db)):
        # Consistency: if GET /settings creates defaults, this should find them.
        # If it can still be None, handle appropriately based on SystemStatus schema
        print("Warning: Settings not found for status endpoint.")
-       # Depending on schema's Optional setting for current_settings:
-       # current_settings = None # Or create a default object if schema requires it
-       # For safety, let's attempt to create if missing, like in GET /settings
+       # Try creating default if missing
        current_settings = models.SystemSettings(id=1)
        db.add(current_settings)
        try:
@@ -219,4 +239,5 @@ def get_system_status(db: Session = Depends(get_db)):
 
 # --- TODO: Add endpoints for FanControl and PeltierControl if needed ---
 # These would likely interact with the SystemSettings table via PATCH /settings
-# or potentially have their own endpoints if more complex logic is needed.
+# (e.g., updating fan_1_speed_percent) or potentially have their own endpoints
+# if more complex logic (like PID control based on temperature) is needed.

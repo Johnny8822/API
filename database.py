@@ -1,13 +1,12 @@
 # database.py
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
 import os
 from dotenv import load_dotenv
-from flask import Flask, jsonify
-import psycopg2
+# Removed unnecessary imports from flask and psycopg2
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker # Import async components
+from sqlalchemy.ext.declarative import declarative_base # Still use declarative_base from here
 
-
+# Import Base from this file for models.py
+Base = declarative_base()
 
 load_dotenv() # Load variables from .env file
 
@@ -16,25 +15,49 @@ DB_PASS = os.getenv("DB_PASS")
 DB_SERVER = os.getenv("DB_SERVER", "localhost")
 DB_NAME = os.getenv("DB_NAME")
 
-# Connection string for PostgreSQL
-SQLALCHEMY_DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_SERVER}/{DB_NAME}"
+# --- Connection string for PostgreSQL using asyncpg ---
+# Change the dialect prefix
+SQLALCHEMY_DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_SERVER}/{DB_NAME}"
 
-# SQLAlchemy engine: The heart of the connection
-engine = create_engine(
+# --- SQLAlchemy Async Engine ---
+# Use create_async_engine
+engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_size=20,       # Increase from default 5
-    max_overflow=10     # Allow extra temporary connections
-)  
-# SessionLocal class: Each instance will be a database session
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    pool_size=20,      # Increase from default 5
+    max_overflow=10    # Allow extra temporary connections
+    # Add echo=True for debugging SQL queries if needed
+    # echo=True
+)
 
-# Base class for declarative models: Our DB models will inherit from this
-Base = declarative_base()
+# --- Async SessionLocal class ---
+# Use async_sessionmaker
+AsyncSessionLocal = async_sessionmaker(
+    bind=engine,
+    class_=AsyncSession, # Specify the async session class
+    expire_on_commit=False # Good practice for async sessions
+)
 
-# Dependency function to get a DB session in API endpoints
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db # Provides the session to the endpoint
-    finally:
-        db.close() # Ensures the session is closed afterwards
+# --- Async Dependency function to get a DB session ---
+# This function must also be async
+async def get_db():
+    # Use async with for the session
+    async with AsyncSessionLocal() as db:
+        try:
+            yield db # Provides the async session to the endpoint
+            await db.commit() # Commit the transaction (or handle commits explicitly in routes)
+        except Exception:
+            await db.rollback() # Rollback on error
+            raise # Re-raise the exception
+        # finally:
+            # async with handles closing automatically
+
+# --- Async function to create tables (run this once at startup) ---
+async def create_tables():
+    print("Attempting to create database tables asynchronously...")
+    async with engine.begin() as conn:
+        # Use run_sync because Base.metadata.create_all is synchronous
+        await conn.run_sync(Base.metadata.create_all)
+    print("Database tables checked/created.")
+
+# NOTE: The models.py file will now need to import Base from this database.py file
+# Make sure models.py has: from database import Base

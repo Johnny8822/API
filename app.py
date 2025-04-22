@@ -7,7 +7,7 @@ from datetime import datetime
 import pytz
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 import models
 import schemas
@@ -241,6 +241,11 @@ def get_system_status(db: Session = Depends(get_db)):
 @app.get("/", response_class=FileResponse, include_in_schema=False)
 async def read_index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+# Redirect /index to /
+@app.get("/index", include_in_schema=False)
+async def redirect_index():
+    return RedirectResponse(url="/")
 
 # Add explicit route for /temperatures
 @app.get("/temperatures", response_class=FileResponse, include_in_schema=False)

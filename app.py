@@ -1,4 +1,5 @@
 # app.py
+import logging
 import os
 from typing import List
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -21,6 +22,8 @@ from sqlalchemy import select, update, insert, delete # Import select for async 
 
 # --- Static Directory Configuration ---
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Capstone API")
 
@@ -251,48 +254,58 @@ async def update_settings(
 # --- Endpoint to GET System Status ---
 # Change the dependency to use async_get_db and AsyncSession
 @app.get("/status", response_model=schemas.SystemStatus, tags=["Status"])
-async def get_system_status(db: AsyncSession = Depends(async_get_db)): # Use AsyncSession and async_get_db
-    """
-    Retrieves the latest sensor readings and current system settings.
-    """
-    # Query latest temps and solar using async queries
-    temp_stmt = select(models.TemperatureReadingDB)\
-                 .order_by(models.TemperatureReadingDB.timestamp.desc())\
-                 .limit(8)
-    latest_temps = await db.scalars(temp_stmt).all() # Use await db.scalars(...).all()
+async def get_system_status(db: AsyncSession = Depends(async_get_db)):
+    try:
+        logging.info("--> Entering get_system_status endpoint")
 
-    solar_stmt = select(models.SolarPVDataDB)\
-                  .order_by(models.SolarPVDataDB.timestamp.desc())\
-                  .limit(1) # Limit 1 for .first()
-    latest_solar = await db.scalar(solar_stmt) # Use await db.scalar(...) for first
+        logging.info("Fetching latest temperatures...")
+        temp_stmt = select(models.TemperatureReadingDB).order_by(models.TemperatureReadingDB.timestamp.desc()).limit(8)
+        latest_temps = await db.scalars(temp_stmt).all()
+        logging.info(f"Fetched {len(latest_temps) if latest_temps else 0} temperature readings.")
+
+        logging.info("Fetching latest solar data...")
+        solar_stmt = select(models.SolarPVDataDB).order_by(models.SolarPVDataDB.timestamp.desc()).limit(1)
+        latest_solar = await db.scalar(solar_stmt)
+        logging.info(f"Fetched solar data: {latest_solar is not None}")
+
+        logging.info("Fetching current settings...")
+        settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
+        current_settings = await db.scalar(settings_stmt)
+        logging.info(f"Fetched settings: {current_settings is not None}")
+
+        if not current_settings:
+            logging.warning("Settings not found, attempting creation...")
+            try:
+                settings = models.SystemSettings(id=1)
+                db.add(settings)
+                await db.commit()
+                await db.refresh(settings)
+                current_settings = settings
+                logging.info("Default settings created.")
+            except Exception as e:
+                await db.rollback()
+                logging.error(f"Error creating default settings: {e}")
+                current_settings = None # Ensure it's None if creation fails
+        else:
+            logging.info("Settings found.")
 
 
-    # Query current settings using async query (same logic as GET /settings)
-    settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
-    current_settings = await db.scalar(settings_stmt) # Use await db.scalar
+        logging.info("Constructing SystemStatus response model...")
+        # This is a common point of failure if data from DB doesn't match schema expectations
+        status_data = schemas.SystemStatus(
+            temperatures=latest_temps,
+            solar_data=latest_solar,
+            current_settings=current_settings
+        )
+        logging.info("SystemStatus model constructed successfully. Returning.")
+        return status_data
 
-    # If settings don't exist, attempt to create default (consistency with /settings endpoint)
-    if not current_settings:
-        print("Warning: Settings not found for status endpoint, attempting to create defaults.")
-        try:
-            settings = models.SystemSettings(id=1)
-            db.add(settings)
-            # Explicitly commit the creation
-            await db.commit()
-            await db.refresh(settings)
-            current_settings = settings # Use the newly created settings
-            print("Default settings created for status endpoint.")
-        except Exception as e:
-             await db.rollback()
-             print(f"Error creating default settings for status endpoint: {e}")
-             current_settings = None # Ensure it's None if creation fails
+    except Exception as e:
+        # This will catch any error within the try block and log it fully
+        logging.error(f"An unexpected error occurred in get_system_status: {e}", exc_info=True)
+        # The dependency's finally block handles rollback/closing
+        raise HTTPException(status_code=500, detail="Internal server error in status endpoint") # Re-raise as HTTP exception
 
-    status_data = schemas.SystemStatus(
-        temperatures=latest_temps, # These are SQLAlchemy ORM objects, Pydantic with from_attributes=True handles conversion
-        solar_data=latest_solar,   # SQLAlchemy ORM object
-        current_settings=current_settings # SQLAlchemy ORM object (or None)
-    )
-    return status_data
 
 
 # --- HTML Page Endpoints ---

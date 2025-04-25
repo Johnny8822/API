@@ -266,6 +266,7 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)): # Use Asy
                   .limit(1) # Limit 1 for .first()
     latest_solar = await db.scalar(solar_stmt) # Use await db.scalar(...) for first
 
+
     # Query current settings using async query (same logic as GET /settings)
     settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
     current_settings = await db.scalar(settings_stmt) # Use await db.scalar

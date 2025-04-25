@@ -1,4 +1,5 @@
 # app.py
+
 import logging
 import os
 from typing import List
@@ -255,21 +256,53 @@ async def update_settings(
 # Change the dependency to use async_get_db and AsyncSession
 @app.get("/status", response_model=schemas.SystemStatus, tags=["Status"])
 async def get_system_status(db: AsyncSession = Depends(async_get_db)):
+    """
+    Retrieves the latest sensor readings and current system settings.
+    """
     try:
         logging.info("--> Entering get_system_status endpoint")
 
-        logging.info("Fetching latest temperatures...")
+        logging.info("Fetching latest temperatures - Step 1: Prepare statement.")
         temp_stmt = select(models.TemperatureReadingDB).order_by(models.TemperatureReadingDB.timestamp.desc()).limit(8)
-        latest_temps = await db.scalars(temp_stmt).all()
-        logging.info(f"Fetched {len(latest_temps) if latest_temps else 0} temperature readings.")
 
+        logging.info("Fetching latest temperatures - Step 2: Call db.scalars() to get awaitable result.")
+        # This calls the method and gets the object that needs awaiting
+        # The error 'Coroutine' object has no attribute 'all' suggests the issue is here or in Step 3
+        async_result_object = db.scalars(temp_stmt)
+
+        logging.info(f"DEBUG: Type after calling db.scalars(): {type(async_result_object)}") # <-- CHECK THIS TYPE
+
+        logging.info("Fetching latest temperatures - Step 3: Await the async result object.")
+        # This awaits the operation. If the type from Step 2 is a coroutine, the error might happen here.
+        try:
+            awaited_result_object = await async_result_object
+            logging.info(f"DEBUG: Type after awaiting: {type(awaited_result_object)}") # <-- CHECK THIS TYPE
+        except Exception as e:
+            logging.error(f"DEBUG: Error while awaiting db.scalars(): {e}", exc_info=True)
+            # Re-raise to ensure it's caught by the main except block and logged fully
+            raise
+
+        logging.info("Fetching latest temperatures - Step 4: Get all results using .all().")
+        # This calls .all() on the awaited result object. If the type from Step 3 doesn't have .all(), the error happens here.
+        try:
+            latest_temps = awaited_result_object.all()
+            logging.info(f"Fetched {len(latest_temps)} temperature readings successfully.")
+        except Exception as e:
+            logging.error(f"DEBUG: Error while calling .all() on awaited result: {e}", exc_info=True)
+            # Re-raise to ensure it's caught by the main except block and logged fully
+            raise
+
+        # --- Continue with Solar Data (using simpler await db.scalar() if it works) ---
         logging.info("Fetching latest solar data...")
         solar_stmt = select(models.SolarPVDataDB).order_by(models.SolarPVDataDB.timestamp.desc()).limit(1)
+        # Assuming await db.scalar() works based on previous analysis
         latest_solar = await db.scalar(solar_stmt)
         logging.info(f"Fetched solar data: {latest_solar is not None}")
 
+        # --- Continue with Settings Data (using simpler await db.scalar() if it works) ---
         logging.info("Fetching current settings...")
         settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
+        # Assuming await db.scalar() works based on previous analysis
         current_settings = await db.scalar(settings_stmt)
         logging.info(f"Fetched settings: {current_settings is not None}")
 
@@ -278,20 +311,22 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
             try:
                 settings = models.SystemSettings(id=1)
                 db.add(settings)
-                await db.commit()
+                await db.commit() # Explicit commit for this creation
                 await db.refresh(settings)
                 current_settings = settings
                 logging.info("Default settings created.")
             except Exception as e:
+                # Error during settings creation needs rollback for this specific transaction
                 await db.rollback()
                 logging.error(f"Error creating default settings: {e}")
+                # Do NOT re-raise here if you want the status endpoint to still return partial data
+                # unless settings are strictly required for the response model (which they are Optional)
                 current_settings = None # Ensure it's None if creation fails
-        else:
-            logging.info("Settings found.")
 
 
         logging.info("Constructing SystemStatus response model...")
         # This is a common point of failure if data from DB doesn't match schema expectations
+        # Pydantic will try to convert SQLAlchemy ORM objects (latest_temps, latest_solar, current_settings)
         status_data = schemas.SystemStatus(
             temperatures=latest_temps,
             solar_data=latest_solar,
@@ -301,11 +336,11 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
         return status_data
 
     except Exception as e:
-        # This will catch any error within the try block and log it fully
+        # This will catch any exception that wasn't specifically handled and re-raised above
+        # The dependency's finally block should handle the session rollback/closing for the main transaction
         logging.error(f"An unexpected error occurred in get_system_status: {e}", exc_info=True)
-        # The dependency's finally block handles rollback/closing
-        raise HTTPException(status_code=500, detail="Internal server error in status endpoint") # Re-raise as HTTP exception
-
+        # Re-raise as HTTPException so FastAPI returns a 500
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error in status endpoint: {e}")
 
 
 # --- HTML Page Endpoints ---

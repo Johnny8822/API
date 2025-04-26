@@ -142,8 +142,8 @@ async def receive_solar_data(
 
 # --- Endpoint to GET System Settings ---
 # Change the dependency to use async_get_db and AsyncSession
-@app.get("/settings", response_model=schemas.Settings, tags=["Settings"])
-async def get_settings(db: AsyncSession = Depends(async_get_db)): # Use AsyncSession and async_get_db
+@app.get("/api/settings", response_model=schemas.Settings, tags=["Settings"])
+async def get_settings(db: AsyncSession = Depends(async_get_db)):
     """
     Retrieves the current system settings (Setpoint, Timers, Fan Speeds).
     Creates default settings if none exist.
@@ -187,14 +187,15 @@ async def get_settings(db: AsyncSession = Depends(async_get_db)): # Use AsyncSes
 
 # --- Endpoint to PATCH System Settings ---
 # Change the dependency to use async_get_db and AsyncSession
-@app.patch("/settings", response_model=schemas.Settings, tags=["Settings"])
+# --- Endpoint to PATCH System Settings ---
+# Also change the path for the PATCH endpoint
+@app.patch("/api/settings", response_model=schemas.Settings, tags=["Settings"])
 async def update_settings(
-    settings_update: schemas.SettingsUpdate, # Use the update schema (all fields optional)
-    db: AsyncSession = Depends(async_get_db) # Use AsyncSession and async_get_db
+    settings_update: schemas.SettingsUpdate,
+    db: AsyncSession = Depends(async_get_db)
 ):
     """
     Updates specific system settings based on the provided fields.
-    Only updates fields included in the request body.
     """
     # Use the async query API
     stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
@@ -372,7 +373,8 @@ async def read_settings():
     file_path = os.path.join(STATIC_DIR, "settings.html")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="settings.html not found")
-    return FileResponse(file_path)
+    return FileResponse(file_path) # This endpoint serves the HTML file
+
 
 # Add explicit route for /pv_info
 @app.get("/pv_info", response_class=FileResponse, include_in_schema=False)

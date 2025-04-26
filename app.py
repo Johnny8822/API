@@ -1,5 +1,10 @@
 # app.py
 
+from typing import List, Optional # Ensure Optional is imported
+from datetime import datetime # Ensure datetime is imported
+from fastapi import Query # Import Query for endpoint parameters
+
+
 import logging
 import os
 from typing import List
@@ -343,6 +348,63 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
         # Re-raise as HTTPException so FastAPI returns a 500
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error in status endpoint: {e}")
 
+@app.get("/api/temperature_history", response_model=List[schemas.TemperatureReading], tags=["Sensor Data"])
+async def get_temperature_history(
+    sensor_name: Optional[str] = Query(None, description="Filter by sensor name"),
+    limit: int = Query(100, description="Limit the number of readings"), # Default limit to 100
+    start_time: Optional[datetime] = Query(None, description="Filter by start time (ISO 8601)"),
+    end_time: Optional[datetime] = Query(None, description="Filter by end time (ISO 8601)"),
+    db: AsyncSession = Depends(async_get_db)
+):
+    """
+    Retrieves historical temperature readings, optionally filtered by sensor name and time range.
+    Returns the latest readings within the filter.
+    """
+    logging.info(f"Fetching temperature history: sensor_name={sensor_name}, limit={limit}, start_time={start_time}, end_time={end_time}")
+
+    stmt = select(models.TemperatureReadingDB)
+
+    if sensor_name:
+        stmt = stmt.where(models.TemperatureReadingDB.sensor_name == sensor_name)
+
+    if start_time:
+        # Ensure timezone awareness if needed, assuming DB stores timezone-aware datetimes
+        stmt = stmt.where(models.TemperatureReadingDB.timestamp >= start_time)
+
+    if end_time:
+        # Ensure timezone awareness if needed
+        stmt = stmt.where(models.TemperatureReadingDB.timestamp <= end_time)
+
+    # Order by timestamp descending to get latest first, then apply limit
+    stmt = stmt.order_by(models.TemperatureReadingDB.timestamp.desc()).limit(limit)
+
+    # To get readings ordered ascending (for plotting), you would typically order_by(asc(...))
+    # Let's order ascending by default for graphs
+    stmt = select(models.TemperatureReadingDB) # Start over for ascending order
+
+    if sensor_name:
+        stmt = stmt.where(models.TemperatureReadingDB.sensor_name == sensor_name)
+
+    if start_time:
+        stmt = stmt.where(models.TemperatureReadingDB.timestamp >= start_time)
+
+    if end_time:
+        stmt = stmt.where(models.TemperatureReadingDB.timestamp <= end_time)
+
+    # Order ascending for graphs
+    stmt = stmt.order_by(models.TemperatureReadingDB.timestamp.asc()).limit(limit)
+
+
+    try:
+        readings = await db.scalars(stmt).all()
+        logging.info(f"Fetched {len(readings)} temperature history readings.")
+        # Returning a List[schemas.TemperatureReading] will automatically serialize ORM objects
+        return readings
+    except Exception as e:
+        logging.error(f"Error fetching temperature history: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database error fetching history: {e}")
+
+
 
 # --- HTML Page Endpoints ---
 # These typically don't interact with the DB, so no async DB changes needed here.
@@ -354,6 +416,16 @@ async def read_index():
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="index.html not found")
     return FileResponse(file_path)
+
+
+# --- New HTML Page Endpoint for Temperature Graphs ---
+@app.get("/temperature_graphs", response_class=FileResponse, include_in_schema=False)
+async def read_temperature_graphs():
+    file_path = os.path.join(STATIC_DIR, "temperature_graphs.html")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="temperature_graphs.html not found")
+    return FileResponse(file_path)
+
 
 # Redirect /index to /
 @app.get("/index", include_in_schema=False)

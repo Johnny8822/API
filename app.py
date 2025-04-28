@@ -1,6 +1,6 @@
 # app.py
-import logging
 import os
+import logging # Import logging
 from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 # Import AsyncSession from sqlalchemy.ext.asyncio
@@ -12,33 +12,43 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 
 # Import async_get_db and async_create_tables
+# Assuming your database.py has the correct async setup now
 from database import engine, get_db as async_get_db, create_tables as async_create_tables # Alias get_db for clarity
-import models # Models are unchanged
-import schemas # Schemas are unchanged
+import models # Your models should be updated
+import schemas # Your schemas should be updated
 
 # Import select for constructing async queries
 from sqlalchemy import select, update, insert, delete # Import select for async queries
 from sqlalchemy import asc # Import asc for ascending order
 
+# Setup basic logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 # --- Static Directory Configuration ---
+# Ensure this path is correct relative to where you run app.py
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+logger.info(f"Serving static files from: {STATIC_DIR}") # Log the static directory path
+
 
 app = FastAPI(title="Capstone API")
 
-# --- Create Database Tables on Startup ---\
+# --- Create Database Tables on Startup ---
 # Use the FastAPI startup event to run the async creation
 @app.on_event("startup")
 async def startup_event():
+    logger.info("Running startup event: creating database tables...")
     await async_create_tables() # Call the async create function
+    logger.info("Database tables creation finished.")
 
 # --- CORS Configuration ---
 origins = [
-    "http://192.168.100.246:8000",
+    "http://192.168.100.246:8000", # Your VM's IP and port
     "http://localhost",
-    "http://localhost:8080",
-    # Add other origins if needed, but avoid "*" in production if possible
-    # Example: Add your VM's specific IP if accessing from another machine
+    "http://localhost:8080", # Common for local development
+    # Add other specific origins if needed
+    "*" # WARNING: Using "*" is insecure in production. Be specific with origins.
 ]
 
 app.add_middleware(
@@ -61,6 +71,8 @@ async def receive_temperature(reading: schemas.TemperatureReadingCreate, db: Asy
     ENSURE this endpoint also receives and SAVES the latest component statuses
     into the SystemSettings table (id=1).
     """
+    logger.info(f"Received temperature reading POST: {reading.model_dump()}")
+
     # Convert schema object to model object
     db_reading = models.TemperatureReadingDB(**reading.model_dump())
 
@@ -74,34 +86,44 @@ async def receive_temperature(reading: schemas.TemperatureReadingCreate, db: Asy
     #    db.add(settings_row) # Add changes to session
 
     db.add(db_reading)
-    await db.commit()
-    await db.refresh(db_reading)
-    print(f"Received and saved temperature reading: Sensor ID {db_reading.sensor_id}, Temp {db_reading.temperature}")
-    return db_reading
+    # Explicitly commit here as we are creating data
+    try:
+        await db.commit()
+        await db.refresh(db_reading)
+        logger.info(f"Successfully saved temperature reading with ID: {db_reading.id}")
+        # Return the created record
+        return db_reading
+    except Exception as e:
+        await db.rollback() # Rollback on error
+        logger.error(f"Error saving temperature reading: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database commit failed: {e}")
+
 
 # --- Endpoint to receive Solar PV Data from ESP32 (Example) ---
 # ASSUME this endpoint is updated to receive and save status fields if status is sent here
 @app.post("/solar_pv", response_model=schemas.SolarPVData, status_code=status.HTTP_201_CREATED, tags=["Sensor Data"])
-async def receive_solar_pv(data: schemas.SolarPVDataCreate, db: AsyncSession = Depends(async_get_db)):
+async def receive_solar_data(data: schemas.SolarPVDataCreate, db: AsyncSession = Depends(async_get_db)):
     """
-    Receives new solar PV data from an ESP32.
+    Receives a single solar PV data reading and saves it to the database.
     ENSURE this endpoint also receives and SAVES the latest component statuses
     into the SystemSettings table (id=1) if status is sent with PV data.
     """
-    # Convert schema object to model object
-    db_data = models.SolarPVDataDB(**data.model_dump())
-     # Example: If status comes with PV data, update SystemSettings row here too
-     # settings_row = await db.get(models.SystemSettings, 1)
-     # if settings_row:
-     #    settings_row.pump_1_status = status_data_from_esp32.pump_1
-     #    # ... update other status fields ...
-     #    db.add(settings_row) # Add changes to session
+    logger.info(f"Received solar PV data POST: {data.model_dump()}")
 
-    db.add(db_data)
-    await db.commit()
-    await db.refresh(db_data)
-    print(f"Received and saved solar PV data: Batt V {db_data.battery_voltage}, Load W {db_data.load_power}")
-    return db_data
+    # Create the SQLAlchemy model instance using Pydantic's model_dump
+    db_solar_data = models.SolarPVDataDB(**data.model_dump())
+
+    db.add(db_solar_data)
+    # Explicitly commit here
+    try:
+        await db.commit()
+        await db.refresh(db_solar_data) # Refresh after commit to get DB-generated ID/timestamp
+        logger.info(f"Successfully saved solar PV data with ID: {db_solar_data.id}")
+        return db_solar_data
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error saving solar PV data: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database commit failed: {e}")
 
 
 # --- Endpoint to GET System Settings (Editable Parameters + Status) ---
@@ -112,24 +134,26 @@ async def get_settings(db: AsyncSession = Depends(async_get_db)):
     Retrieves the current system settings (Setpoint, Timers, Fan Speeds, Status).
     Creates default settings if none exist.
     """
+    logger.info("Entering get_settings endpoint.")
     stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
-    settings = await db.scalar(stmt)
+    settings = await db.scalar(stmt) # Use await db.scalar
 
     if not settings:
-        print("No settings found, creating default settings row...")
+        logger.warning("No settings found, creating default settings row...")
         # Default status fields will be False/None initially
         settings = models.SystemSettings(id=1)
         db.add(settings)
         try:
-            await db.commit()
+            await db.commit() # Explicitly commit creation
             await db.refresh(settings)
-            print("Default settings created and committed.")
+            logger.info("Default settings created and committed.")
             return settings # Return the newly created settings
         except Exception as e:
             await db.rollback()
-            print(f"Error creating default settings: {e}")
+            logger.error(f"Error creating default settings: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create default settings: {e}")
 
+    logger.info("Successfully retrieved settings.")
     return settings # Return the settings object
 
 
@@ -144,62 +168,68 @@ async def update_settings(
     based on the provided fields. Only updates fields included in the request body.
     Status fields and non-controllable speeds are ignored if sent.
     """
+    logger.info(f"Entering update_settings endpoint. Received update data: {settings_update.model_dump(exclude_unset=True)}")
+
     stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
-    settings = await db.scalar(stmt)
+    settings = await db.scalar(stmt) # Use await db.scalar
 
     if not settings:
         # Attempt to create default settings if they don't exist before patching
-        print("Settings not found during PATCH, attempting to create defaults...")
+        logger.warning("Settings not found during PATCH, attempting to create defaults...")
         settings = models.SystemSettings(id=1)
         db.add(settings)
+        # Explicitly commit creation
         try:
             await db.commit()
             await db.refresh(settings)
-            print("Default settings created during PATCH.")
+            logger.info("Default settings created during PATCH.")
         except Exception as e:
             await db.rollback()
-            print(f"Error creating default settings during PATCH: {e}")
+            logger.error(f"Error creating default settings during PATCH: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Settings not found and could not be created: {e}")
+
+
+    if not settings: # Check again after potential creation
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Settings not found")
 
 
     # Get the fields to update from the request body, excluding fields that were not set
     update_data = settings_update.model_dump(exclude_unset=True)
 
     if not update_data:
-        print("PATCH request received, but no valid fields found to update.")
-        # Refresh settings to get latest status before returning if needed, though client will fetch status separately
+        # Return current settings if no update data provided (PATCH allows this)
+        logger.info("PATCH request received, but no valid fields found to update.")
+        # Refresh settings to return latest status etc.
         # await db.refresh(settings) # Refreshing here might be good to return latest status
-        return settings # Return existing settings (with potentially stale status)
+        return settings # Return existing settings
 
-    # Update the fields in the database model object
+
     updated_fields_count = 0
+    # Update the fields in the database model object
     for key, value in update_data.items():
         # Check if the key is a valid, *editable* field in the SystemSettings model
         # The fields in SettingsUpdate should match the editable fields in SystemSettings model
-        if hasattr(models.SystemSettings, key): # Simple check
-             # Ensure we don't accidentally update status fields if they were somehow sent
-             # (The SettingsUpdate schema should prevent this, but this adds a layer)
-             if key in schemas.SettingsUpdate.model_fields: # Check if the field is in the SettingsUpdate schema
-                setattr(settings, key, value)
-                updated_fields_count += 1
-                print(f"Updating setting: {key} = {value}")
-             else:
-                 print(f"Warning: Attempted to update non-editable field '{key}' via PATCH.")
+        # Added an extra check to ensure the key is defined in the SettingsUpdate schema
+        if hasattr(models.SystemSettings, key) and key in schemas.SettingsUpdate.model_fields:
+            setattr(settings, key, value)
+            updated_fields_count += 1
+            logger.info(f"Updating setting: {key} = {value}")
         else:
-            print(f"Warning: Attempted to update non-existent setting field '{key}'")
+            logger.warning(f"Attempted to update non-editable or non-existent setting field '{key}' via PATCH.")
 
 
     # The onupdate in the model should handle updated_at, but ensure it works.
     # settings.updated_at = datetime.now(pytz.timezone('America/Jamaica')) # Can remove manual update if onupdate works
 
+    # Commit the changes. Explicitly commit for updates.
     try:
         await db.commit()
         await db.refresh(settings) # Refresh to get the potentially updated 'updated_at' and any system-set status
-        print(f"Successfully updated {updated_fields_count} settings.")
+        logger.info(f"Successfully updated {updated_fields_count} settings.")
         return settings
     except Exception as e:
         await db.rollback()
-        print(f"Error committing updated settings: {e}")
+        logger.error(f"Error committing updated settings: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database commit failed: {e}")
 
 
@@ -210,47 +240,71 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
     """
     Retrieves the latest sensor readings and current system settings (including status).
     """
-    # Query latest temps and solar using async queries (no changes needed here)
+    logger.info("Entering get_system_status endpoint. Fetching latest data...")
+
+    # Query latest temps using async queries
     temp_stmt = select(models.TemperatureReadingDB)\
                  .order_by(models.TemperatureReadingDB.timestamp.desc())\
                  .limit(8)
-    latest_temps = await db.scalars(temp_stmt).all()
+    # CORRECTED SYNTAX: (await db.scalars(stmt)).all()
+    try:
+        latest_temps = (await db.scalars(temp_stmt)).all() # Use await db.scalars(...).all()
+        logger.info(f"Fetched {len(latest_temps)} latest temperature readings.")
+    except Exception as e:
+         logger.error(f"Error fetching latest temperatures: {e}", exc_info=True)
+         latest_temps = [] # Return empty list on error or raise exception
 
+
+    # Query latest solar using async query
     solar_stmt = select(models.SolarPVDataDB)\
                   .order_by(models.SolarPVDataDB.timestamp.desc())\
-                  .limit(1)
-    latest_solar = await db.scalar(solar_stmt)
+                  .limit(1) # Limit 1 for .first()
+    # CORRECTED SYNTAX: await db.scalar(stmt)
+    try:
+        latest_solar = await db.scalar(solar_stmt) # Use await db.scalar(...) for first
+        if latest_solar:
+             logger.info("Fetched latest solar PV data.")
+        else:
+             logger.info("No solar PV data found.")
+    except Exception as e:
+         logger.error(f"Error fetching latest solar data: {e}", exc_info=True)
+         latest_solar = None # Return None on error or raise exception
+
 
     # Query current settings (including all speeds and status) from the SystemSettings table
     settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
-    current_settings = await db.scalar(settings_stmt)
+    # CORRECTED SYNTAX: await db.scalar(stmt)
+    try:
+        current_settings = await db.scalar(settings_stmt) # Use await db.scalar
+        if current_settings:
+             logger.info("Fetched current system settings.")
+        else:
+             logger.warning("No system settings found.")
+    except Exception as e:
+        logger.error(f"Error fetching current settings: {e}", exc_info=True)
+        current_settings = None # Return None on error or raise exception
 
-    # If settings don't exist, attempt to create default (this will also create status/speeds fields with defaults)
-    if not current_settings:
-        print("Warning: Settings not found for status endpoint, attempting to create defaults.")
-        try:
-            # Default status fields will be False/None, default speeds 50%
-            settings = models.SystemSettings(id=1)
-            db.add(settings)
-            await db.commit()
-            await db.refresh(settings)
-            current_settings = settings
-            print("Default settings created for status endpoint.")
-        except Exception as e:
-             await db.rollback()
-             print(f"Error creating default settings for status endpoint: {e}")
-             current_settings = None # Ensure it's None if creation fails, so response reflects missing settings
+
+    # If settings don't exist, attempt to create default (consistency with /settings endpoint)
+    # This logic might be better handled within the /api/settings GET endpoint on its first call
+    # and relying on that row existing for subsequent status calls.
+    # If you keep this creation logic here, ensure it handles potential race conditions
+    # if multiple status requests come before settings is first saved.
+    # For now, we'll rely on the /api/settings GET/PATCH to ensure the row exists.
+    # If current_settings is None here, the response model will handle the Optional[Settings]
+
 
     # Construct the SystemStatus response model - it will now include all speeds and status from current_settings
     status_data = schemas.SystemStatus(
-        temperatures=latest_temps,
-        solar_data=latest_solar,
-        current_settings=current_settings # This object now contains all speed and status fields
+        temperatures=latest_temps, # These are SQLAlchemy ORM objects, Pydantic with from_attributes=True handles conversion
+        solar_data=latest_solar,   # SQLAlchemy ORM object (or None)
+        current_settings=current_settings # SQLAlchemy ORM object (or None)
     )
+    logger.info("Successfully constructed system status response.")
     return status_data
 
 
-# --- New Endpoint to GET Temperature History Data ---
+# --- Endpoint to GET Temperature History Data ---
 # Assumes you want this under the /api prefix for consistency
 @app.get("/api/temperature_history", response_model=List[schemas.TemperatureReading], tags=["Sensor Data"])
 async def get_temperature_history(
@@ -264,7 +318,7 @@ async def get_temperature_history(
     Retrieves historical temperature readings, optionally filtered by sensor name and time range.
     Returns the latest readings within the filter.
     """
-    logging.info(f"Fetching temperature history: sensor_name={sensor_name}, limit={limit}, start_time={start_time}, end_time={end_time}")
+    logger.info(f"Entering get_temperature_history: sensor_name={sensor_name}, limit={limit}, start_time={start_time}, end_time={end_time}")
 
     stmt = select(models.TemperatureReadingDB)
 
@@ -285,68 +339,92 @@ async def get_temperature_history(
 
 
     try:
-        readings = await db.scalars(stmt).all()
-        logging.info(f"Fetched {len(readings)} temperature history readings.")
+        # CORRECTED SYNTAX: (await db.scalars(stmt)).all()
+        readings = (await db.scalars(stmt)).all() # Use await db.scalars(...).all()
+        logger.info(f"Fetched {len(readings)} temperature history readings.")
         # Returning a List[schemas.TemperatureReading] will automatically serialize ORM objects
         return readings
     except Exception as e:
-        logging.error(f"Error fetching temperature history: {e}", exc_info=True)
+        logger.error(f"Error fetching temperature history: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Database error fetching history: {e}")
 
 
 # --- HTML Page Endpoints ---
+# These typically don't interact with the DB, so no async DB changes needed here.
+# Ensure your static files are accessible.
 @app.get("/", response_class=FileResponse, include_in_schema=False)
 async def read_index():
+    # Use async os operations if reading large files, but FileResponse handles this generally
     file_path = os.path.join(STATIC_DIR, "index.html")
+    logger.info(f"Serving index.html from: {file_path}")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="index.html not found")
+        logger.error(f"index.html not found at {file_path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="index.html not found")
     return FileResponse(file_path)
 
 # Redirect /index to /
 @app.get("/index", include_in_schema=False)
 async def redirect_index():
+    logger.info("Redirecting /index to /")
     return RedirectResponse(url="/")
 
+# Add explicit route for /temperatures
 @app.get("/temperatures", response_class=FileResponse, include_in_schema=False)
 async def read_temperatures():
     file_path = os.path.join(STATIC_DIR, "temperatures.html")
+    logger.info(f"Serving temperatures.html from: {file_path}")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="temperatures.html not found")
+        logger.error(f"temperatures.html not found at {file_path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="temperatures.html not found")
     return FileResponse(file_path)
 
 @app.get("/settings", response_class=FileResponse, include_in_schema=False)
 async def read_settings():
     file_path = os.path.join(STATIC_DIR, "settings.html")
+    logger.info(f"Serving settings.html from: {file_path}")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="settings.html not found")
+        logger.error(f"settings.html not found at {file_path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="settings.html not found")
     return FileResponse(file_path)
 
+# Add explicit route for /pv_info
 @app.get("/pv_info", response_class=FileResponse, include_in_schema=False)
 async def read_pv_info():
     file_path = os.path.join(STATIC_DIR, "pv_info.html")
+    logger.info(f"Serving pv_info.html from: {file_path}")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="pv_info.html not found")
+        logger.error(f"pv_info.html not found at {file_path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pv_info.html not found")
     return FileResponse(file_path)
 
 # New HTML Page Endpoint for Temperature Graphs
 @app.get("/temperature_graphs", response_class=FileResponse, include_in_schema=False)
 async def read_temperature_graphs():
     file_path = os.path.join(STATIC_DIR, "temperature_graphs.html")
+    logger.info(f"Serving temperature_graphs.html from: {file_path}")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="temperature_graphs.html not found")
+        logger.error(f"temperature_graphs.html not found at {file_path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="temperature_graphs.html not found")
     return FileResponse(file_path)
 
 
 # --- MOUNT STATIC DIRECTORY (mount last, generally) ---
 # This makes files like style.css and script.js accessible via /static/filename.ext
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# Ensure the directory exists and contains the static files
+if not os.path.exists(STATIC_DIR):
+    logger.error(f"Static directory NOT FOUND at: {STATIC_DIR}")
+    # You might want to raise an error or handle this case
+else:
+    logger.info(f"Mounting static directory at: {STATIC_DIR}")
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 # ------------------------------------------------------
 
 # --- TODO: Add endpoint to receive status data from ESP32 if not included in temp/pv endpoints ---
 # This is crucial for status indicators to work.
-# Example (assuming JSON body with status fields):
+# Example (assuming JSON body with status fields, and schema SystemStatusUpdateFromESP32):
 # @app.post("/status_update", status_code=status.HTTP_200_OK)
 # async def receive_status_update(status_data: schemas.SystemStatusUpdateFromESP32, db: AsyncSession = Depends(async_get_db)):
+#    logger.info(f"Received status update: {status_data.model_dump()}")
 #    settings_row = await db.get(models.SystemSettings, 1)
 #    if settings_row:
 #        update_data = status_data.model_dump(exclude_unset=True)
@@ -355,5 +433,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 #                setattr(settings_row, key, value)
 #        await db.commit()
 #        # No refresh needed unless you need updated_at back
-#        return {"message": "Status updated"}
-#    raise HTTPException(status_code=404, detail="Settings row not found")
+#        return {"message": "Status updated successfully"}
+#    logger.error("Settings row not found for status update.")
+#    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Settings row not found")

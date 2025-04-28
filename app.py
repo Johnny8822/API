@@ -113,8 +113,21 @@ async def receive_solar_data(data: schemas.SolarPVDataCreate, db: AsyncSession =
     # Create the SQLAlchemy model instance using Pydantic's model_dump
     db_solar_data = models.SolarPVDataDB(**data.model_dump())
 
-    db.add(db_solar_data)
-    # Explicitly commit here
+    db.add(db_solar_data) # db.add is synchronous on the session object
+    # Commit handled by dependency, refresh needed if returning the object
+    # try:
+    #     await db.commit()
+    #     await db.refresh(db_solar_data) # Get ID and timestamp from DB - this needs await!
+    #     print(f"Successfully saved solar PV data with ID: {db_solar_data.id}")
+    #     return db_solar_data # Return the created record
+    # except Exception as e:
+    #     await db.rollback()
+    #     print(f"Error saving solar PV data: {e}")
+    #     raise HTTPException(status_code=500, detail=f"Database commit failed: {e}")
+
+    # If using the commit within the dependency, you might need to refresh AFTER the commit
+    # in the dependency's finally block if you want to return the object here with DB-generated fields.
+    # Or, explicitly commit here. Let's explicitly commit for clarity in this endpoint.
     try:
         await db.commit()
         await db.refresh(db_solar_data) # Refresh after commit to get DB-generated ID/timestamp
@@ -236,7 +249,7 @@ async def update_settings(
 # --- Endpoint to GET System Status ---
 # This endpoint fetches the latest sensor readings AND the current SystemSettings (including status and all speeds)
 @app.get("/status", response_model=schemas.SystemStatus, tags=["Status"])
-async def get_system_status(db: AsyncSession = Depends(async_get_db)):
+async def get_system_status(db: AsyncSession = Depends(async_get_db)): # Use AsyncSession and async_get_db
     """
     Retrieves the latest sensor readings and current system settings (including status).
     """
@@ -246,9 +259,10 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
     temp_stmt = select(models.TemperatureReadingDB)\
                  .order_by(models.TemperatureReadingDB.timestamp.desc())\
                  .limit(8)
-    # CORRECTED SYNTAX: (await db.scalars(stmt)).all()
+    # CORRECTED SYNTAX: Split await and .all()
     try:
-        latest_temps = (await db.scalars(temp_stmt)).all() # Use await db.scalars(...).all()
+        scalars_result = await db.scalars(temp_stmt) # Await the coroutine
+        latest_temps = scalars_result.all() # Call .all() on the awaited result
         logger.info(f"Fetched {len(latest_temps)} latest temperature readings.")
     except Exception as e:
          logger.error(f"Error fetching latest temperatures: {e}", exc_info=True)
@@ -259,7 +273,7 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
     solar_stmt = select(models.SolarPVDataDB)\
                   .order_by(models.SolarPVDataDB.timestamp.desc())\
                   .limit(1) # Limit 1 for .first()
-    # CORRECTED SYNTAX: await db.scalar(stmt)
+    # CORRECTED SYNTAX: await db.scalar(stmt) - this syntax is fine for single result
     try:
         latest_solar = await db.scalar(solar_stmt) # Use await db.scalar(...) for first
         if latest_solar:
@@ -273,7 +287,7 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
 
     # Query current settings (including all speeds and status) from the SystemSettings table
     settings_stmt = select(models.SystemSettings).where(models.SystemSettings.id == 1)
-    # CORRECTED SYNTAX: await db.scalar(stmt)
+    # CORRECTED SYNTAX: await db.scalar(stmt) - this syntax is fine for single result
     try:
         current_settings = await db.scalar(settings_stmt) # Use await db.scalar
         if current_settings:
@@ -304,7 +318,7 @@ async def get_system_status(db: AsyncSession = Depends(async_get_db)):
     return status_data
 
 
-# --- Endpoint to GET Temperature History Data ---
+# --- New Endpoint to GET Temperature History Data ---
 # Assumes you want this under the /api prefix for consistency
 @app.get("/api/temperature_history", response_model=List[schemas.TemperatureReading], tags=["Sensor Data"])
 async def get_temperature_history(
@@ -339,8 +353,9 @@ async def get_temperature_history(
 
 
     try:
-        # CORRECTED SYNTAX: (await db.scalars(stmt)).all()
-        readings = (await db.scalars(stmt)).all() # Use await db.scalars(...).all()
+        # CORRECTED SYNTAX: Split await and .all()
+        scalars_result = await db.scalars(stmt) # Await the coroutine
+        readings = scalars_result.all() # Call .all() on the awaited result
         logger.info(f"Fetched {len(readings)} temperature history readings.")
         # Returning a List[schemas.TemperatureReading] will automatically serialize ORM objects
         return readings

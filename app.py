@@ -44,7 +44,7 @@ async def startup_event():
 
 # --- CORS Configuration ---
 origins = [
-    "http://192.168.100.246:8000", # Your VM's IP and port
+    "http://192.168.247.144:8000", # Your VM's IP and port
     "http://localhost",
     "http://localhost:8080", # Common for local development
     # Add other specific origins if needed
